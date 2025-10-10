@@ -111,7 +111,7 @@ class DiffblueCoverMCPServer:
         if not working_dir:
             working_dir = os.getcwd()
             
-        command = ["dcover", "create"]
+        command = ["dcover", "create", "--skip-verification", "--skip-validation", "--fuzzing-iterations=10", "--skip-dummy-test"]
 
         # Add entry point if provided
         if entry_point:
