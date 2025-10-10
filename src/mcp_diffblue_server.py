@@ -25,6 +25,10 @@ class DiffblueCoverMCPServer:
                         "working_directory": {
                             "type": "string",
                             "description": "Working directory for running dcover create (optional)"
+                        },
+                        "entry_point": {
+                            "type": "string",
+                            "description": "Fully qualified class name to test (optional)"
                         }
                     }
                 }
@@ -83,7 +87,10 @@ class DiffblueCoverMCPServer:
             }
         
         if tool_name == "dcover_create":
-            result = self.run_dcover_create(tool_args.get("working_directory"))
+            result = self.run_dcover_create(
+                tool_args.get("working_directory"),
+                tool_args.get("entry_point")
+            )
             return {
                 "jsonrpc": "2.0",
                 "id": request.get("id"),
@@ -97,7 +104,7 @@ class DiffblueCoverMCPServer:
                 }
             }
     
-    def run_dcover_create(self, working_dir: str = None) -> Dict[str, Any]:
+    def run_dcover_create(self, working_dir: str = None, entry_point: str = None) -> Dict[str, Any]:
         """
         Executes 'dcover create' in the specified working directory.
         """
@@ -105,6 +112,10 @@ class DiffblueCoverMCPServer:
             working_dir = os.getcwd()
             
         command = ["dcover", "create"]
+
+        # Add entry point if provided
+        if entry_point:
+            command.append(entry_point)
         
         try:
             result = subprocess.run(
