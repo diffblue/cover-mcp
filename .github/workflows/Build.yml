@@ -1,0 +1,51 @@
+#  Copyright 2025 Diffblue
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+
+name: Build
+
+on:
+  pull_request:
+    branches:
+      - "**"
+  push:
+    branches:
+      - "main"
+
+jobs:
+  build:
+    runs-on: ubuntu-small
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.5"
+
+      - name: Install Project Dependencies
+        run: uv sync --locked --all-extras --all-groups
+
+      - name: Check for Vulnerabilities
+        run: uv tool run uv-secure --disable-cache
+
+      - name: Run Linter
+        run: uvx ruff check --preview --output-format=github
+
+      - name: Run Formatter
+        run: uvx ruff format --preview --output-format=github
+
+      - name: Run Tests with Coverage
+        run: uv run coverage run -m pytest -v
+
+      - name: Coverage Report
+        run: uv run coverage report
