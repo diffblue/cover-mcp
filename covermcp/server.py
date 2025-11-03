@@ -73,6 +73,24 @@ execute: Annotated[ExecutorFunc, "How to execute system commands."] = executor.e
 mcp: Annotated[FastMCP[Any], "The global MCP server"] = FastMCP("DiffblueCover")
 
 
+@mcp.prompt("write tests")
+def write_tests() -> list[dict]:
+    """Provide system prompt for Java unit test writing guidance.
+
+    Establishes LLM context as a Java unit testing expert to improve
+    test generation quality and suggestions.
+
+    Returns:
+        list[dict]: System role message defining the assistant's expertise.
+    """
+    return [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant highly skilled at writing unit tests for java code.",
+        },
+    ]
+
+
 @mcp.tool()
 # Ignore "too many parameters for a method" check
 async def create(  # noqa: PLR0913
