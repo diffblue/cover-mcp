@@ -14,6 +14,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 import contextlib
+import re
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -21,6 +22,8 @@ from subprocess import PIPE, STDOUT, CalledProcessError, Popen, TimeoutExpired
 from typing import Final
 
 CLEANUP_TIMEOUT: Final[int] = 5
+
+ANSI_ESCAPE: Final[re] = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
 def execute(command: list[str], working_dir: Path, timeout: int | None) -> Iterator[str]:
@@ -66,7 +69,7 @@ def execute(command: list[str], working_dir: Path, timeout: int | None) -> Itera
                 cleanup_process(process)
                 raise TimeoutExpired(command, timeout)
 
-            yield line.rstrip("\n\r")
+            yield ANSI_ESCAPE.sub("", line.rstrip("\n\r"))
 
         if timeout is not None:
             elapsed = time.time() - start_time
