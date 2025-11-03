@@ -259,20 +259,21 @@ def create_options() -> dict:
 
 
 @mcp.tool()
-# Ignore "too many parameters for a method" check
-async def create(  # noqa: PLR0913
-        path: Annotated[str | None, "The path to the dcover executable"] = None,
-        working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
-        dcover_timeout: Annotated[
-            int | None, "The maximum time in seconds to wait for dcover to create tests."
-        ] = DEFAULT_TIMEOUT,
-        entry_points: Annotated[
-            list[str] | None,
-            "The list of package names, class names, and/or methods to write tests for. "
-            "The entries here should be fully qualified, in other words you must include "
-            "the package and class names when specifying a method name.",
-        ] = None,
-        ctx: Annotated[Context | None, "The MCP Server Context"] = None,
+# Ignore "too many parameters for a method" and "too many positional arguments" check
+async def create(  # noqa: PLR0913,PLR0917
+    path: Annotated[str | None, "The path to the dcover executable"] = None,
+    working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
+    dcover_timeout: Annotated[
+        int | None, "The maximum time in seconds to wait for dcover to create tests."
+    ] = DEFAULT_TIMEOUT,
+    entry_points: Annotated[
+        list[str] | None,
+        "The list of package names, class names, and/or methods to write tests for. "
+        "The entries here should be fully qualified, in other words you must include "
+        "the package and class names when specifying a method name.",
+    ] = None,
+    args: Annotated[list[str] | None, "The options to pass to dcover"] = None,
+    ctx: Annotated[Context | None, "The MCP Server Context"] = None,
 ) -> object:
     """Invoke Diffblue Cover to generate unit tests for Java code.
 
@@ -290,6 +291,7 @@ async def create(  # noqa: PLR0913
         entry_points: List of fully-qualified Java targets (packages, classes, or methods)
             to generate tests for. Examples: ['com.example.MyClass',
             'com.example.MyClass.myMethod']. If None, tests entire project.
+        args: Additional arguments to pass to dcover. Defaults to None.
         ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
 
     Returns:
@@ -318,6 +320,10 @@ async def create(  # noqa: PLR0913
     path = find_dcover_executable(path)
 
     command = [path, "create", "--batch"]
+
+    if args is not None and len(args) > 0:
+        await ctx.debug(f"{args} provided by LLM")
+        command.extend(args)
 
     options = os.getenv(DIFFBLUE_COVER_OPTIONS)
     if options is not None and len(options) > 0:
