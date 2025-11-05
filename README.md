@@ -1,250 +1,143 @@
 # **MCP Server for Diffblue Cover CLI**
 
-This repository provides a **Model Context Protocol (MCP) Server**
-for the Diffblue Cover CLI tool (`dcover`), making it
-callable and manageable by various AI development environments that
-adhere to the MCP specification (like the Gemini CLI).
+This repository provides a **Model Context Protocol (MCP) Server** for the Diffblue Cover CLI tool (`dcover`), making
+it callable and manageable by various AI development environments that adhere to the MCP specification (like the
+Gemini CLI).
 
-## **Core Component: The MCP Server (mcp\_diffblue\_server.py)**
+## **Core Component: The MCP Server `covermcp/server.py`**
 
 The Python script serves as the universal adapter for the `dcover create` command.
-
-### **Server Logic Overview**
-
-1. **Input:** Reads a JSON payload from stdin containing the MCP request.
-2. **Context Extraction:** Extracts the required `id` and the `working_directory` (usually found in the `params.context` field).
-3. **Execution:** Executes the shell command `dcover create` using the extracted working directory as the context (`cwd`).
-4. **Output:** Constructs an MCP-compliant JSON response, including the execution status, return_code, stdout, and stderr.
-5. **Return:** Writes the final JSON response to stdout.
 
 ## **Prerequisites**
 
 Before configuring the server with any host environment, ensure you have the following installed:
 
 1. **Diffblue Cover CLI:** The`dcover` command must be installed and accessible in your system's `PATH`.
-   * You can verify this by running `dcover version` in your terminal.
-2. **Python 3:** The MCP server script is written in Python.
+    * You can verify this by running `dcover version` in your terminal.
+2. **uv:** A Python project and package manager (https://docs.astral.sh/uv/)
 
-## **Tool Integration and Setup**
+## **Installing the MCP server**
 
-To use this MCP server, you must provide your host AI environment (e.g., Gemini CLI, Claude Code, Windsurf, Devin) with a configuration that tells it how to invoke the Python script.
+The project uses [FastMCP](https://gofastmcp.com/getting-started/welcome) to develop and deploy the MCP server. To
+install this server, you can use `uv run fastmcp install claude-code --server-spec main.py` (for example), other 
+LLM tools are supported out of the box:
 
-### **1. Configuration for Gemini CLI (via Extension Manifest)**
+```bash
+$ uv run fastmcp install --help
+Usage: fastmcp install COMMAND
 
-The Gemini CLI uses a JSON manifest file to register external tools. This process is straightforward and allows the model to recommend or execute the tool command directly.
+Install MCP servers in various clients and formats.
 
-#### **Step 1: Create the Extension Manifest**
-
-Create a file named **diffblue-cover.json** in the same directory as
-your Python script.
+╭─ Commands ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ claude-code     Install an MCP server in Claude Code.                                                                  │
+│ claude-desktop  Install an MCP server in Claude Desktop.                                                               │
+│ cursor          Install an MCP server in Cursor.                                                                       │
+│ gemini-cli      Install an MCP server in Gemini CLI.                                                                   │
+│ mcp-json        Generate MCP configuration JSON for manual installation.                                               │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
+
+This command will install the MCP server for _all_ projects, which you may not want. If this is the case, then you can
+be targeted in your installation if you use the `mcp-json` option to augment a `.mcp.json` file in the project:
+
+```json
 {
-  "name": "Diffblue Cover",
-  "command": "dcover_create",
-  "description": "Generate unit tests using Diffblue Cover CLI.",
-  "executable": "python",
-  "args": ["mcp_diffblue_server.py"],
-  "response_schema": {
-    "type": "object",
-    "properties": {
-      "stdout": { "type": "string" },
-      "stderr": { "type": "string" },
-      "return_code": { "type": "number" }
-    }
-  }
-}
-```
-|  | Field | Description |
-| :---- | :---- | :---- |
-|  | name | The friendly name of the tool. |
-|  | command | The actual command/verb you will use in the Gemini CLI (e.g., `/dcover_create`). |
-|  | executable | The program used to run the script (e.g., python). |
-|  | args | Arguments passed to the executable (`mcp_diffblue_server.py`). |
-|  | response\_schema | Defines the structure of the result object returned by the server. |
-
-#### **Step 2: Install the Extension**
-
-Assuming both files are in a folder named diffblue-extension, install
-it using the Gemini CLI command:
-```
-# Navigate to the directory containing your extension files
-cd /path/to/diffblue-extension
-
-# Install the extension using its JSON manifest file
-gemini extensions install ./diffblue-cover.json
-```
-
-#### **Usage**
-
-You can now instruct the model to use the tool in your chat prompt:
-"I need unit tests for the current working directory. Please run the Diffblue Cover tool."
-The Gemini CLI will execute the tool command `/dcover\_create`.
-
-### 2. Configuration for Claude Code
-
-Claude Code supports external tools through MCP-compatible manifest files. By registering Diffblue Cover as a tool, you can have Claude invoke it directly during coding sessions.
-
-#### Step 1: Create the MCP Tool Manifest
-
-Create a file named **diffblue-cover.mcp.json** in the same directory as your Python script:
-
-```
-{
-  "name": "Diffblue Cover",
-  "command": "dcover_create",
-  "description": "Generate unit tests using Diffblue Cover CLI.",
-  "executable": "python",
-  "args": ["mcp_diffblue_server.py"],
-  "response_schema": {
-    "type": "object",
-    "properties": {
-      "stdout": { "type": "string" },
-      "stderr": { "type": "string" },
-      "return_code": { "type": "number" }
+  "mcpServers": {
+    "Diffblue Cover": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--with",
+        "fastmcp",
+        "fastmcp",
+        "run",
+        "/path/to/cover-mcp/main.py"
+      ]
     }
   }
 }
 ```
 
-| Field | Description |
-| :---- | :---- |
-| **name** | Friendly name for the tool. |
-| **command** | The command name Claude Code will recognize, e.g., `/dcover_create`. |
-| **description** | Description shown when Claude suggests or executes the tool. |
-| **executable** | The runtime used to start the MCP server (`python`). |
-| **args** | Arguments passed to the executable (`mcp_diffblue_server.py`). |
-| **response_schema** | Defines the expected response structure from the Diffblue MCP server. |
+This also allows you to specify environment variables. Currently, there are two that you can specify:
 
-#### Step 2: Register the Tool in Claude Code
+* `DIFFBLUE_COVER_CLI` : the location of the installed `dcover` command line
+* `DIFFBLUE_COVER_OPTIONS` : use these `dcover` options as well as those supplied by the LLM
 
-Move your manifest to Claude's local MCP tools directory:
-```
-mv diffblue-cover.mcp.json ~/.claude/mcp/tools/
-```
+To use these variables in the `.mcp.json` file above, you would do so like this:
 
-#### Step 3: Restart Claude Code
-
-Restart Claude Code to detect and load the new MCP tool:
-```
-claude restart
-```
-
-#### Usage
-
-Once configured, you can ask Claude Code to generate tests automatically:
-> "Generate unit tests for my current project using Diffblue Cover."
-
-Claude Code will execute the `/dcover_create` command and return the results generated by the Diffblue Cover MCP server.
-
-### 3. Configuration for Devin
-
-Devin supports custom MCP tools through manifest files, allowing it to execute external commands such as Diffblue Cover via its MCP infrastructure.
-
-#### Step 1: Create the MCP Tool Manifest
-
-Create a file named **diffblue-cover.mcp.json** in the same directory as your Python script:
-
-```
+```json
 {
-  "name": "Diffblue Cover",
-  "command": "dcover_create",
-  "description": "Generate unit tests using Diffblue Cover CLI.",
-  "executable": "python",
-  "args": ["mcp_diffblue_server.py"],
-  "response_schema": {
-    "type": "object",
-    "properties": {
-      "stdout": { "type": "string" },
-      "stderr": { "type": "string" },
-      "return_code": { "type": "number" }
+  "mcpServers": {
+    "Diffblue Cover": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--with",
+        "fastmcp",
+        "fastmcp",
+        "run",
+        "/path/to/cover-mcp/main.py"
+      ],
+      "env": {
+        "DIFFBLUE_COVER_CLI": "/path/to/dcover",
+        "DIFFBLUE_COVER_OPTIONS": "--verbose --active-profiles=test"
+      }
     }
   }
 }
 ```
 
-| Field | Description |
-| :---- | :---- |
-| **name** | Human-friendly name for the tool. |
-| **command** | Command that Devin will recognize (e.g., `/dcover_create`). |
-| **description** | Short summary of the tool’s purpose. |
-| **executable** | Runtime used to start the MCP process (`python`). |
-| **args** | Arguments passed to the executable (`mcp_diffblue_server.py`). |
-| **response_schema** | Specifies the structure of the response returned by the MCP server. |
+This will run the equivalent to `/path/to/dcover --batch create <entry points provided by the LLM> --verbose --active-profiles=test`
 
-#### Step 2: Register the Tool in Devin
+**Note:** No attempt is made to disambiguate the options provided options. 
 
-Move your manifest into Devin’s MCP directory:
-```
-mv diffblue-cover.mcp.json ~/.devin/mcp/tools/
-```
+## **Developmental Notes**
 
-#### Step 3: Restart Devin
+FastMCP contains a tool called "MCP Inspector" which can be used to interact with the MCP server without needing the
+LLM interaction. To run this developmental server, you can use `uv run fastmcp dev`. The configuration lives in the
+file `fastmcp.json` which provides (among other things) the entry point for the server.
 
-Restart the Devin environment to detect and load your custom MCP tool:
-```
-devin restart
-```
+```bash
+$ uv run fastmcp dev --help    
+Usage: fastmcp dev [OPTIONS] [ARGS]
 
-#### Usage
+Run an MCP server with the MCP Inspector for development.
 
-Once registered, you can tell Devin:
-> "Generate unit tests for my current project using Diffblue Cover."
-
-Devin will call the `/dcover_create` MCP tool and return the test output generated by Diffblue Cover.
-
----
-
-### 4. Configuration for Windsurf
-
-Windsurf also uses MCP-compatible tool manifests to integrate external utilities like Diffblue Cover.
-
-#### Step 1: Create the MCP Tool Manifest
-
-Save the same manifest file as **diffblue-cover.mcp.json**:
-```
-{
-  "name": "Diffblue Cover",
-  "command": "dcover_create",
-  "description": "Generate unit tests using Diffblue Cover CLI.",
-  "executable": "python",
-  "args": ["mcp_diffblue_server.py"],
-  "response_schema": {
-    "type": "object",
-    "properties": {
-      "stdout": { "type": "string" },
-      "stderr": { "type": "string" },
-      "return_code": { "type": "number" }
-    }
-  }
-}
+╭─ Parameters ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ SERVER-SPEC --server-spec  Python file to run, optionally with :object suffix, or None to auto-detect fastmcp.json      │
+│ --with-editable            Directory containing pyproject.toml to install in editable mode (can be used multiple times) │
+│ --with                     Additional packages to install (can be used multiple times)                                  │
+│ --inspector-version        Version of the MCP Inspector to use                                                          │
+│ --ui-port                  Port for the MCP Inspector UI                                                                │
+│ --server-port              Port for the MCP Inspector Proxy server                                                      │
+│ --python                   Python version to use (e.g., 3.10, 3.11)                                                     │
+│ --with-requirements        Requirements file to install dependencies from                                               │
+│ --project                  Run the command within the given project directory                                           │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
-| Field | Description |
-| :---- | :---- |
-| **name** | Human-readable tool name displayed in Windsurf. |
-| **command** | The command Windsurf will execute (e.g., `/dcover_create`). |
-| **description** | Visible text summarizing what the tool does. |
-| **executable** | Program used to launch the Diffblue MCP server (`python`). |
-| **args** | CLI arguments for the executable (`mcp_diffblue_server.py`). |
-| **response_schema** | Output format that Windsurf expects from the MCP server. |
+### **Project Layout**
 
-#### Step 2: Register the Tool in Windsurf
+The project and the dependencies are managed by `uv`, see the [documentation](https://docs.astral.sh/uv/) for the
+usage instructions.
 
-Move or copy the manifest into Windsurf’s MCP tools directory:
-```
-mv diffblue-cover.mcp.json ~/.windsurf/mcp/tools/
-```
+### **Running Tests**
 
-#### Step 3: Restart Windsurf
+There are unit tests (in the `test` directory) which you can run with `uv run coverage run -m pytest` and then get a
+coverage report with `uv run coverage report --omit "test/*"` (python includes the coverage of the test files by
+default -- not that useful).
 
-Reload Windsurf to register the new MCP tool:
-```
-windsurf restart
-```
+### **Linting/Formatting**
 
-#### Usage
+To run the linter, run `uv run ruff check`. If successful, you will see a message "All checks passed!". If not, you
+should address the issues picked up. More information can be found at
+the [Ruff Linter Documentation](https://docs.astral.sh/ruff/linter/)
 
-After setup, you can use the tool by prompting:
-> "Generate unit tests for my codebase using Diffblue Cover."
+To format the code, run `uv run ruff format`, this should be run before committing any changes. More information can be
+found at the [Ruff Formatter Documentation](https://docs.astral.sh/ruff/formatter/).
 
-Windsurf will automatically run the `/dcover_create` MCP command through the Diffblue Cover MCP server, returning results directly in your workspace.
+## *References*
+
+* https://gofastmcp.com/
+* https://docs.astral.sh/uv/
+* https://docs.astral.sh/ruff/
