@@ -262,10 +262,10 @@ async def _run_dcover_command(
     ctx: Context,
     path: str | None,
     subcommand: str,
-    tool_args: list[str],
     passthrough_args: list[str] | None,
     working_directory: Path,
     dcover_timeout: int | None,
+    **kwargs: Any,
 ) -> object:
     """Internal helper to execute any dcover command, stream output, and handle errors.
 
@@ -273,10 +273,10 @@ async def _run_dcover_command(
         ctx: MCP server context for logging.
         path: Path to the dcover executable.
         subcommand: The dcover subcommand to run (e.g., "create", "refactor").
-        tool_args: A list of arguments specific to the tool being called.
         passthrough_args: A list of additional arguments from the user/LLM.
         working_directory: The project directory to run in.
         dcover_timeout: The maximum execution time in seconds.
+        **kwargs: Tool-specific keyword arguments (e.g., entry_points, dry_run).
 
     Returns:
         A dictionary containing the execution result.
@@ -291,7 +291,31 @@ async def _run_dcover_command(
     # Build the core command
     command = [path, subcommand, "--batch"]
 
-    # Add tool-specific arguments (e.g., entry_points for 'create')
+    # --- Start: Tool-specific argument processing ---
+    # Process kwargs from the wrapper tool into a list of CLI strings
+    tool_args = []
+    if subcommand == "create":
+        entry_points = kwargs.get("entry_points")
+        if entry_points:
+            tool_args.extend([x.strip() for x in entry_points if x.strip()])
+
+    elif subcommand == "refactor":
+        if kwargs.get("dry_run"):
+            tool_args.append("--dry-run")
+
+    elif subcommand == "issues":
+        if (limit := kwargs.get("limit")) is not None:
+            tool_args.extend(["--limit", str(limit)])
+        if (skip := kwargs.get("skip")) is not None:
+            tool_args.extend(["--skip", str(skip)])
+        if kwargs.get("prompt"):
+            tool_args.append("--prompt")
+        if (cover_json := kwargs.get("cover_json")) is not None:
+            tool_args.extend(["--cover-json", cover_json])
+        if kwargs.get("dry_run"):
+            tool_args.append("--dry-run")
+    # --- End: Tool-specific argument processing ---
+
     command.extend(tool_args)
 
     # Add passthrough arguments from the LLM
@@ -383,19 +407,14 @@ async def create(  # noqa: PLR0913,PLR0917
         This tool requires a valid Diffblue Cover license. See:
         https://docs.diffblue.com/features/cover-cli/commands-and-arguments#create-tests
     """
-
-    # Process tool-specific arguments
-    tool_args = [x.strip() for x in entry_points if x.strip()] if entry_points else []
-
-    # Call the shared helper
     return await _run_dcover_command(
         ctx=ctx,
         path=path,
         subcommand="create",
-        tool_args=tool_args,
         passthrough_args=args,
         working_directory=working_directory,
         dcover_timeout=dcover_timeout,
+        entry_points=entry_points,
     )
 
 
@@ -435,63 +454,6 @@ def find_dcover_executable(provided: str | None) -> str:
         f"or set {DIFFBLUE_COVER_CLI} environment variable."
     )
 
-@mcp.tool()
-# Ignore "too many parameters for a method" and "too many positional arguments" check
-async def refactor(  # noqa: PLR0913
-    path: Annotated[str | None, "The path to the dcover executable"] = None,
-    working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
-    dcover_timeout: Annotated[
-        int | None, "The maximum time in seconds to wait for dcover to create tests."
-    ] = DEFAULT_TIMEOUT,
-    dry_run: Annotated[bool, "Run preflight checks only (aliased as --preflight)"] = False,
-    args: Annotated[list[str] | None, "The additional options to pass to dcover refactor"] = None,
-    ctx: Annotated[Context | None, "The MCP Server Context"] = None,
-) -> object:
-    """Invoke Diffblue Cover to refactor the project (aliased as 'fix-build').
-
-    This tool executes the `dcover refactor` command to apply automated
-    refactorings, such as fixing build issues or adding missing dependencies.
-
-    Args:
-        path: Path to the dcover executable. If not provided, searches system PATH
-            and the DIFFBLUE_COVER_CLI environment variable.
-        working_directory: Root directory of the Java project to test. Defaults to
-            the current working directory.
-        dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
-            for no timeout (not recommended).
-        dry_run: If True, passes the '--dry-run' flag to check for readiness
-            without applying changes.
-        args: Additional arguments to pass to dcover. Defaults to None.
-        ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
-
-    Returns:
-        dict: Execution result containing:
-            - return_code (int): Exit code (0 for success)
-            - status (str): "success" if completed without errors
-            - output (str): Complete stdout/stderr from dcover
-            - command (list[str]): The exact command that was executed
-            - working_directory (Path): Directory where command was run
-
-    Raises:
-        ToolError: If dcover executable not found, command fails, or timeout exceeded.
-            The error includes the partial output collected before failure.
-    """
-
-    # Process tool-specific arguments
-    tool_args = []
-    if dry_run:
-        tool_args.append("--dry-run")
-
-    # Call the shared helper
-    return await _run_dcover_command(
-        ctx=ctx,
-        path=path,
-        subcommand="refactor",
-        tool_args=tool_args,
-        passthrough_args=args,
-        working_directory=working_directory,
-        dcover_timeout=dcover_timeout,
-    )
 
 @mcp.tool()
 # Ignore "too many parameters for a method" and "too many positional arguments" check
@@ -534,22 +496,16 @@ async def refactor(  # noqa: PLR0913
         ToolError: If dcover executable not found, command fails, or timeout exceeded.
             The error includes the partial output collected before failure.
     """
-
-    # Process tool-specific arguments
-    tool_args = []
-    if dry_run:
-        tool_args.append("--dry-run")
-
-    # Call the shared helper
     return await _run_dcover_command(
         ctx=ctx,
         path=path,
         subcommand="refactor",
-        tool_args=tool_args,
         passthrough_args=args,
         working_directory=working_directory,
         dcover_timeout=dcover_timeout,
+        dry_run=dry_run,
     )
+
 
 @mcp.tool()
 # Ignore "too many parameters for a method" and "too many positional arguments" check
@@ -599,27 +555,16 @@ async def issues(  # noqa: PLR0913,PLR0917
         ToolError: If dcover executable not found, command fails, or timeout exceeded.
             The error includes the partial output collected before failure.
     """
-
-    # Process tool-specific arguments
-    tool_args = []
-    if limit is not None:
-        tool_args.extend(["--limit", str(limit)])
-    if skip is not None:
-        tool_args.extend(["--skip", str(skip)])
-    if prompt:
-        tool_args.append("--prompt")
-    if cover_json:
-        tool_args.extend(["--cover-json", cover_json])
-    if dry_run:
-        tool_args.append("--dry-run")
-
-    # Call the shared helper
     return await _run_dcover_command(
         ctx=ctx,
         path=path,
         subcommand="issues",
-        tool_args=tool_args,
         passthrough_args=args,
         working_directory=working_directory,
         dcover_timeout=dcover_timeout,
+        limit=limit,
+        skip=skip,
+        prompt=prompt,
+        cover_json=cover_json,
+        dry_run=dry_run,
     )
