@@ -492,3 +492,61 @@ async def refactor(  # noqa: PLR0913
         working_directory=working_directory,
         dcover_timeout=dcover_timeout,
     )
+
+@mcp.tool()
+# Ignore "too many parameters for a method" and "too many positional arguments" check
+async def refactor(  # noqa: PLR0913
+    path: Annotated[str | None, "The path to the dcover executable"] = None,
+    working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
+    dcover_timeout: Annotated[
+        int | None, "The maximum time in seconds to wait for dcover to create tests."
+    ] = DEFAULT_TIMEOUT,
+    dry_run: Annotated[bool, "Run preflight checks only (aliased as --preflight)"] = False,
+    args: Annotated[list[str] | None, "The additional options to pass to dcover refactor"] = None,
+    ctx: Annotated[Context | None, "The MCP Server Context"] = None,
+) -> object:
+    """Invoke Diffblue Cover to refactor the project (aliased as 'fix-build').
+
+    This tool executes the `dcover refactor` command to apply automated
+    refactorings, such as fixing build issues or adding missing dependencies.
+
+    Args:
+        path: Path to the dcover executable. If not provided, searches system PATH
+            and the DIFFBLUE_COVER_CLI environment variable.
+        working_directory: Root directory of the Java project to test. Defaults to
+            the current working directory.
+        dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
+            for no timeout (not recommended).
+        dry_run: If True, passes the '--dry-run' flag to check for readiness
+            without applying changes.
+        args: Additional arguments to pass to dcover. Defaults to None.
+        ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
+
+    Returns:
+        dict: Execution result containing:
+            - return_code (int): Exit code (0 for success)
+            - status (str): "success" if completed without errors
+            - output (str): Complete stdout/stderr from dcover
+            - command (list[str]): The exact command that was executed
+            - working_directory (Path): Directory where command was run
+
+    Raises:
+        ToolError: If dcover executable not found, command fails, or timeout exceeded.
+            The error includes the partial output collected before failure.
+    """
+
+    # Process tool-specific arguments
+    tool_args = []
+    if dry_run:
+        tool_args.append("--dry-run")
+
+    # Call the shared helper
+    return await _run_dcover_command(
+        ctx=ctx,
+        path=path,
+        subcommand="refactor",
+        tool_args=tool_args,
+        passthrough_args=args,
+        working_directory=working_directory,
+        dcover_timeout=dcover_timeout,
+    )

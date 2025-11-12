@@ -173,3 +173,35 @@ def test_find_dcover_executable(monkeypatch):
         m.setattr(shutil, "which", lambda *args: None)
         with pytest.raises(ToolError):
             server.find_dcover_executable(None)
+
+@pytest.mark.asyncio
+async def test_dcover_refactor_command(mock_happy_path_execution):
+    async with Client(server.mcp) as client:
+        result = await client.call_tool("refactor", arguments={"path": Path("path", "to", "dcover")})
+        assert result is not None
+
+        mock_happy_path_execution.assert_called_once_with(
+            [str(Path("path", "to", "dcover")), "refactor", "--batch"],
+            Path(result.data["working_directory"]),
+            DEFAULT_TIMEOUT,
+        )
+        assert "command" in result.data
+        assert "line 1" in result.data["output"]
+        assert "line 2" in result.data["output"]
+
+
+@pytest.mark.asyncio
+async def test_dcover_refactor_command_with_dry_run(mock_happy_path_execution):
+    async with Client(server.mcp) as client:
+        result = await client.call_tool(
+            "refactor", arguments={"path": Path("path", "to", "dcover"), "dry_run": True}
+        )
+        assert result is not None
+
+        mock_happy_path_execution.assert_called_once_with(
+            [str(Path("path", "to", "dcover")), "refactor", "--batch", "--dry-run"],
+            Path(result.data["working_directory"]),
+            DEFAULT_TIMEOUT,
+        )
+        assert "command" in result.data
+        assert "--dry-run" in result.data["command"]
