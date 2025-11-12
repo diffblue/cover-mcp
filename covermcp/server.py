@@ -258,7 +258,41 @@ def create_options() -> dict:
     }  # fmt: skip
 
 
-async def _run_dcover_command(
+def _build_tool_args(subcommand: str, **kwargs: Any) -> list[str]:
+    """Process kwargs from the wrapper tool into a list of CLI strings.
+
+    Args:
+        subcommand: The dcover subcommand (e.g., "create", "issues").
+        **kwargs: Tool-specific keyword arguments.
+
+    Returns:
+        A list of formatted command-line arguments.
+    """
+    tool_args = []
+    if subcommand == "create":
+        entry_points = kwargs.get("entry_points")
+        if entry_points:
+            tool_args.extend([x.strip() for x in entry_points if x.strip()])
+
+    elif subcommand == "refactor":
+        if kwargs.get("dry_run"):
+            tool_args.append("--dry-run")
+
+    elif subcommand == "issues":
+        if (limit := kwargs.get("limit")) is not None:
+            tool_args.extend(["--limit", str(limit)])
+        if (skip := kwargs.get("skip")) is not None:
+            tool_args.extend(["--skip", str(skip)])
+        if kwargs.get("prompt"):
+            tool_args.append("--prompt")
+        if (cover_json := kwargs.get("cover_json")) is not None:
+            tool_args.extend(["--cover-json", cover_json])
+        if kwargs.get("dry_run"):
+            tool_args.append("--dry-run")
+    return tool_args
+
+
+async def _run_dcover_command(  # noqa: PLR0913
     ctx: Context,
     path: str | None,
     subcommand: str,
@@ -291,31 +325,8 @@ async def _run_dcover_command(
     # Build the core command
     command = [path, subcommand, "--batch"]
 
-    # --- Start: Tool-specific argument processing ---
     # Process kwargs from the wrapper tool into a list of CLI strings
-    tool_args = []
-    if subcommand == "create":
-        entry_points = kwargs.get("entry_points")
-        if entry_points:
-            tool_args.extend([x.strip() for x in entry_points if x.strip()])
-
-    elif subcommand == "refactor":
-        if kwargs.get("dry_run"):
-            tool_args.append("--dry-run")
-
-    elif subcommand == "issues":
-        if (limit := kwargs.get("limit")) is not None:
-            tool_args.extend(["--limit", str(limit)])
-        if (skip := kwargs.get("skip")) is not None:
-            tool_args.extend(["--skip", str(skip)])
-        if kwargs.get("prompt"):
-            tool_args.append("--prompt")
-        if (cover_json := kwargs.get("cover_json")) is not None:
-            tool_args.extend(["--cover-json", cover_json])
-        if kwargs.get("dry_run"):
-            tool_args.append("--dry-run")
-    # --- End: Tool-specific argument processing ---
-
+    tool_args = _build_tool_args(subcommand, **kwargs)
     command.extend(tool_args)
 
     # Add passthrough arguments from the LLM

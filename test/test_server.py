@@ -174,6 +174,7 @@ def test_find_dcover_executable(monkeypatch):
         with pytest.raises(ToolError):
             server.find_dcover_executable(None)
 
+
 @pytest.mark.asyncio
 async def test_dcover_refactor_command(mock_happy_path_execution):
     async with Client(server.mcp) as client:
@@ -193,9 +194,7 @@ async def test_dcover_refactor_command(mock_happy_path_execution):
 @pytest.mark.asyncio
 async def test_dcover_refactor_command_with_dry_run(mock_happy_path_execution):
     async with Client(server.mcp) as client:
-        result = await client.call_tool(
-            "refactor", arguments={"path": Path("path", "to", "dcover"), "dry_run": True}
-        )
+        result = await client.call_tool("refactor", arguments={"path": Path("path", "to", "dcover"), "dry_run": True})
         assert result is not None
 
         mock_happy_path_execution.assert_called_once_with(
@@ -205,6 +204,7 @@ async def test_dcover_refactor_command_with_dry_run(mock_happy_path_execution):
         )
         assert "command" in result.data
         assert "--dry-run" in result.data["command"]
+
 
 @pytest.mark.asyncio
 async def test_dcover_issues_command(mock_happy_path_execution):
