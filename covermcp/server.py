@@ -258,6 +258,75 @@ def create_options() -> dict:
     }  # fmt: skip
 
 
+async def _run_dcover_command(
+    ctx: Context,
+    path: str | None,
+    subcommand: str,
+    tool_args: list[str],
+    passthrough_args: list[str] | None,
+    working_directory: Path,
+    dcover_timeout: int | None,
+) -> object:
+    """Internal helper to execute any dcover command, stream output, and handle errors.
+
+    Args:
+        ctx: MCP server context for logging.
+        path: Path to the dcover executable.
+        subcommand: The dcover subcommand to run (e.g., "create", "refactor").
+        tool_args: A list of arguments specific to the tool being called.
+        passthrough_args: A list of additional arguments from the user/LLM.
+        working_directory: The project directory to run in.
+        dcover_timeout: The maximum execution time in seconds.
+
+    Returns:
+        A dictionary containing the execution result.
+
+    Raises:
+        ToolError: If the command fails, times out, or dcover is not found.
+    """
+
+    # We'll assume that the path and directories exist
+    path = find_dcover_executable(path)
+
+    # Build the core command
+    command = [path, subcommand, "--batch"]
+
+    # Add tool-specific arguments (e.g., entry_points for 'create')
+    command.extend(tool_args)
+
+    # Add passthrough arguments from the LLM
+    if passthrough_args:
+        await ctx.debug(f"{passthrough_args} provided by LLM")
+        command.extend(passthrough_args)
+
+    # Add options from the environment variable
+    options = os.getenv(DIFFBLUE_COVER_OPTIONS)
+    if options:
+        await ctx.debug(f"{DIFFBLUE_COVER_OPTIONS} provided in environment variable")
+        command.extend(shlex.split(options))
+
+    cmd = " ".join(command)
+    await ctx.debug(f"Running: {cmd}")
+    await ctx.debug(f"Working directory: {working_directory}")
+    await ctx.debug(f"Timeout: {dcover_timeout}s")
+
+    output_lines = []
+    try:
+        for line in execute(command, working_directory, dcover_timeout):
+            output_lines.append(line)
+            await ctx.debug(line)
+            await ctx.report_progress(progress=len(output_lines))
+        return {
+            "return_code": 0,
+            "status": "success",
+            "output": "\n".join(output_lines),
+            "command": command,
+            "working_directory": working_directory,
+        }
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        raise ToolError(str(e), "\n".join(output_lines)) from e
+
+
 @mcp.tool()
 # Ignore "too many parameters for a method" and "too many positional arguments" check
 async def create(  # noqa: PLR0913,PLR0917
@@ -315,45 +384,19 @@ async def create(  # noqa: PLR0913,PLR0917
         https://docs.diffblue.com/features/cover-cli/commands-and-arguments#create-tests
     """
 
-    # We'll assume that the path and directories exist
+    # Process tool-specific arguments
+    tool_args = [x.strip() for x in entry_points if x.strip()] if entry_points else []
 
-    path = find_dcover_executable(path)
-
-    command = [path, "create", "--batch"]
-
-    if args is not None and len(args) > 0:
-        await ctx.debug(f"{args} provided by LLM")
-        command.extend(args)
-
-    options = os.getenv(DIFFBLUE_COVER_OPTIONS)
-    if options is not None and len(options) > 0:
-        await ctx.debug(f"{DIFFBLUE_COVER_OPTIONS} provided in environment variable")
-        command.extend(shlex.split(options))
-
-    entry_points = [x.strip() for x in entry_points if x.strip()] if entry_points else []
-    if entry_points:
-        command.extend(entry_points)
-
-    cmd = " ".join(command)
-    await ctx.debug(f"Running: {cmd}")
-    await ctx.debug(f"Working directory: {working_directory}")
-    await ctx.debug(f"Timeout: {dcover_timeout}s")
-
-    output_lines = []
-    try:
-        for line in execute(command, working_directory, dcover_timeout):
-            output_lines.append(line)
-            await ctx.debug(line)
-            await ctx.report_progress(progress=len(output_lines))
-        return {
-            "return_code": 0,
-            "status": "success",
-            "output": "\n".join(output_lines),
-            "command": command,
-            "working_directory": working_directory,
-        }
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        raise ToolError(str(e), "\n".join(output_lines)) from e
+    # Call the shared helper
+    return await _run_dcover_command(
+        ctx=ctx,
+        path=path,
+        subcommand="create",
+        tool_args=tool_args,
+        passthrough_args=args,
+        working_directory=working_directory,
+        dcover_timeout=dcover_timeout,
+    )
 
 
 def find_dcover_executable(provided: str | None) -> str:
@@ -390,4 +433,62 @@ def find_dcover_executable(provided: str | None) -> str:
         "Cannot find dcover executable. "
         "Ensure dcover is in PATH, provide explicit path, "
         f"or set {DIFFBLUE_COVER_CLI} environment variable."
+    )
+
+@mcp.tool()
+# Ignore "too many parameters for a method" and "too many positional arguments" check
+async def refactor(  # noqa: PLR0913
+    path: Annotated[str | None, "The path to the dcover executable"] = None,
+    working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
+    dcover_timeout: Annotated[
+        int | None, "The maximum time in seconds to wait for dcover to create tests."
+    ] = DEFAULT_TIMEOUT,
+    dry_run: Annotated[bool, "Run preflight checks only (aliased as --preflight)"] = False,
+    args: Annotated[list[str] | None, "The additional options to pass to dcover refactor"] = None,
+    ctx: Annotated[Context | None, "The MCP Server Context"] = None,
+) -> object:
+    """Invoke Diffblue Cover to refactor the project (aliased as 'fix-build').
+
+    This tool executes the `dcover refactor` command to apply automated
+    refactorings, such as fixing build issues or adding missing dependencies.
+
+    Args:
+        path: Path to the dcover executable. If not provided, searches system PATH
+            and the DIFFBLUE_COVER_CLI environment variable.
+        working_directory: Root directory of the Java project to test. Defaults to
+            the current working directory.
+        dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
+            for no timeout (not recommended).
+        dry_run: If True, passes the '--dry-run' flag to check for readiness
+            without applying changes.
+        args: Additional arguments to pass to dcover. Defaults to None.
+        ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
+
+    Returns:
+        dict: Execution result containing:
+            - return_code (int): Exit code (0 for success)
+            - status (str): "success" if completed without errors
+            - output (str): Complete stdout/stderr from dcover
+            - command (list[str]): The exact command that was executed
+            - working_directory (Path): Directory where command was run
+
+    Raises:
+        ToolError: If dcover executable not found, command fails, or timeout exceeded.
+            The error includes the partial output collected before failure.
+    """
+
+    # Process tool-specific arguments
+    tool_args = []
+    if dry_run:
+        tool_args.append("--dry-run")
+
+    # Call the shared helper
+    return await _run_dcover_command(
+        ctx=ctx,
+        path=path,
+        subcommand="refactor",
+        tool_args=tool_args,
+        passthrough_args=args,
+        working_directory=working_directory,
+        dcover_timeout=dcover_timeout,
     )
