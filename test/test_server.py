@@ -205,3 +205,54 @@ async def test_dcover_refactor_command_with_dry_run(mock_happy_path_execution):
         )
         assert "command" in result.data
         assert "--dry-run" in result.data["command"]
+
+@pytest.mark.asyncio
+async def test_dcover_issues_command(mock_happy_path_execution):
+    async with Client(server.mcp) as client:
+        result = await client.call_tool("issues", arguments={"path": Path("path", "to", "dcover")})
+        assert result is not None
+
+        mock_happy_path_execution.assert_called_once_with(
+            [str(Path("path", "to", "dcover")), "issues", "--batch"],
+            Path(result.data["working_directory"]),
+            DEFAULT_TIMEOUT,
+        )
+        assert "command" in result.data
+        assert "line 1" in result.data["output"]
+        assert "line 2" in result.data["output"]
+
+
+@pytest.mark.asyncio
+async def test_dcover_issues_command_with_all_args(mock_happy_path_execution):
+    async with Client(server.mcp) as client:
+        arguments = {
+            "path": Path("path", "to", "dcover"),
+            "limit": 10,
+            "skip": 5,
+            "prompt": True,
+            "cover_json": "/tmp/report.json",
+            "dry_run": True,
+        }
+        result = await client.call_tool("issues", arguments=arguments)
+        assert result is not None
+
+        expected_command = [
+            str(Path("path", "to", "dcover")),
+            "issues",
+            "--batch",
+            "--limit",
+            "10",
+            "--skip",
+            "5",
+            "--prompt",
+            "--cover-json",
+            "/tmp/report.json",
+            "--dry-run",
+        ]
+
+        mock_happy_path_execution.assert_called_once_with(
+            expected_command,
+            Path(result.data["working_directory"]),
+            DEFAULT_TIMEOUT,
+        )
+        assert result.data["command"] == expected_command

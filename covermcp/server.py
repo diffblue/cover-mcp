@@ -550,3 +550,76 @@ async def refactor(  # noqa: PLR0913
         working_directory=working_directory,
         dcover_timeout=dcover_timeout,
     )
+
+@mcp.tool()
+# Ignore "too many parameters for a method" and "too many positional arguments" check
+async def issues(  # noqa: PLR0913,PLR0917
+    path: Annotated[str | None, "The path to the dcover executable"] = None,
+    working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
+    dcover_timeout: Annotated[
+        int | None, "The maximum time in seconds to wait for dcover to create tests."
+    ] = DEFAULT_TIMEOUT,
+    limit: Annotated[int | None, "Limit the number of issues to output"] = None,
+    skip: Annotated[int | None, "Skip the first N issues"] = None,
+    prompt: Annotated[bool, "Output suggested prompt for each actionable issue"] = False,
+    cover_json: Annotated[str | None, "Path to a JSON-formatted test-writing summary report"] = None,
+    dry_run: Annotated[bool, "Run preflight checks only (aliased as --preflight)"] = False,
+    args: Annotated[list[str] | None, "The additional options to pass to dcover issues"] = None,
+    ctx: Annotated[Context | None, "The MCP Server Context"] = None,
+) -> object:
+    """Invoke Diffblue Cover to identify project issues.
+
+    This tool executes the `dcover issues` command to output a prioritized
+    list of project issues that may prevent test generation.
+
+    Args:
+        path: Path to the dcover executable. If not provided, searches system PATH
+            and the DIFFBLUE_COVER_CLI environment variable.
+        working_directory: Root directory of the Java project to test. Defaults to
+            the current working directory.
+        dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
+            for no timeout (not recommended).
+        limit: Limit the number of issues to output.
+        skip: Skip the first N issues from the report.
+        prompt: If True, outputs a suggested prompt for each actionable issue.
+        cover_json: Location of the JSON-formatted test-writing summary report.
+        dry_run: If True, passes the '--dry-run' flag to check for readiness.
+        args: Additional arguments to pass to dcover. Defaults to None.
+        ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
+
+    Returns:
+        dict: Execution result containing:
+            - return_code (int): Exit code (0 for success)
+            - status (str): "success" if completed without errors
+            - output (str): Complete stdout/stderr from dcover
+            - command (list[str]): The exact command that was executed
+            - working_directory (Path): Directory where command was run
+
+    Raises:
+        ToolError: If dcover executable not found, command fails, or timeout exceeded.
+            The error includes the partial output collected before failure.
+    """
+
+    # Process tool-specific arguments
+    tool_args = []
+    if limit is not None:
+        tool_args.extend(["--limit", str(limit)])
+    if skip is not None:
+        tool_args.extend(["--skip", str(skip)])
+    if prompt:
+        tool_args.append("--prompt")
+    if cover_json:
+        tool_args.extend(["--cover-json", cover_json])
+    if dry_run:
+        tool_args.append("--dry-run")
+
+    # Call the shared helper
+    return await _run_dcover_command(
+        ctx=ctx,
+        path=path,
+        subcommand="issues",
+        tool_args=tool_args,
+        passthrough_args=args,
+        working_directory=working_directory,
+        dcover_timeout=dcover_timeout,
+    )
