@@ -292,7 +292,7 @@ def _build_tool_args(subcommand: str, **kwargs: Any) -> list[str]:
     return tool_args
 
 
-async def _run_dcover_command(  # noqa: PLR0913
+async def _run_dcover_command(  # noqa: PLR0913,PLR0917
     ctx: Context,
     path: str | None,
     subcommand: str,
@@ -468,7 +468,7 @@ def find_dcover_executable(provided: str | None) -> str:
 
 @mcp.tool()
 # Ignore "too many parameters for a method" and "too many positional arguments" check
-async def refactor(  # noqa: PLR0913
+async def refactor(  # noqa: PLR0913,PLR0917
     path: Annotated[str | None, "The path to the dcover executable"] = None,
     working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
     dcover_timeout: Annotated[
