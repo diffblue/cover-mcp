@@ -91,8 +91,25 @@ def write_tests() -> list[dict]:
     ]
 
 
+@mcp.prompt("fix project")
+def fix_project() -> list[dict]:
+    """Provide system prompt for fixing java projects.
+
+    Establishes LLM context as an expert in fixing the user's project so that Diffblue Cover can write tests.
+
+    Returns:
+        list[dict]: System role message defining the assistant's expertise.
+    """
+    return [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant highly skilled at fixing issues preventing the user from writing tests using Diffblue Cover CLI.",
+        },
+    ]
+
+
 @mcp.resource(
-    "data://config",
+    "data://config/write-tests",
     description="Provides the configuration options for creating tests with Diffblue Cover.",
     mime_type="application/json",
     annotations={"readOnlyHint": True, "idempotentHint": True},
@@ -249,6 +266,7 @@ def create_options() -> dict:
                                                        " can also specify 'junit-4' (any version of JUnit 4) and "
                                                        "'junit-5' (any version of JUnit 5)",
         "--upload[=<URL>]": "URL of a Cover Reports server to upload reports to.",
+        "--use-cache": "Use the cache to speed up the environment checks. The cache resides in .diffblue/cache/ for the root and all submodules of the project.",
         "--version": "Print version information and exit.",
         "--verbose": "Display more detailed information.",
         "--preflight-without-tests": "During the preflight checks, dcover will run the existing tests. To disable that "
@@ -256,6 +274,36 @@ def create_options() -> dict:
         "--working-directory=<value>": "Set the working directory for running dcover. "
                                        "Environment: DIFFBLUE_WORKING_DIRECTORY",
     }  # fmt: skip
+
+
+@mcp.resource(
+    "data://config/issues",
+    description="Provides the configuration options for creating tests with Diffblue Cover.",
+    mime_type="application/json",
+    annotations={"readOnlyHint": True, "idempotentHint": True},
+)
+def issues_options() -> dict:
+    return {
+        "--batch": "Do not display progress bars. Automatically enabled when environment variable CI=true.",
+        "--cache": "Use the cache to speed up the environment checks. The cache resides in .diffblue/cache/ for the root and all submodules of the project.",
+        "--report-file=<report>": "Location of the JSON-formatted test-writing summary report.",
+        "--classpath=<value>": "A ':' separated list of directories and JAR archives to search for class files.",
+        "--define=<String=String>": "Set system properties to be applied when running tests.",
+        "--preflight": "Check that the project's environment is ready to run Diffblue Cover.",
+        "--environment=<String=String>": "Set environment variables to be applied when running dcover.",
+        "--exclude-modules=<module>[,<module>...]": "Exclude specified modules from the discovered module list. Environment: DIFFBLUE_EXCLUDE_MODULES",
+        "--gradle": "Make Cover prefer the use of Gradle build system.",
+        "--include-modules=<module>[,<module>...]": "Include only specified modules from the discovered module list. Environment: DIFFBLUE_INCLUDE_MODULES",
+        "--limit=<limit>": "Limit the number of issues to output, defaults to unlimited.",
+        "--maven": "Make Cover prefer the use of Maven build system.",
+        "--prompt": "Output suggested prompt for each actionable issue.",
+        "--resume-from-module=<module>": "Resume iteration from the specified module. Environment: DIFFBLUE_RESUME_FROM_MODULE",
+        "--skip=<skip>": "Skip the first N issues from the report",
+        "--strict": "Forces the strict definition of all project environment options by you - Diffblue Cover will not attempt to make an automated selection. For example, if multiple testing frameworks are configured for your project then running with this option will lead to an error, unless you define which testing framework Cover should use when writing tests. Without this option, Cover would choose one of the testing frameworks for you, and proceed.",
+        "--version": "Print version information and exit.",
+        "--verbose": "Display more detailed information.",
+        "--working-directory=<value>": "Set the working directory for running dcover. Environment: DIFFBLUE_WORKING_DIRECTORY"
+    }
 
 
 def _build_tool_args(subcommand: str, **kwargs: Any) -> list[str]:
@@ -287,19 +335,197 @@ def _build_tool_args(subcommand: str, **kwargs: Any) -> list[str]:
             tool_args.append("--prompt")
         if (cover_json := kwargs.get("cover_json")) is not None:
             tool_args.extend(["--cover-json", cover_json])
-        if kwargs.get("dry_run"):
-            tool_args.append("--dry-run")
     return tool_args
 
 
+@mcp.tool()
+# Ignore "too many parameters for a method" and "too many positional arguments" check
+async def create(  # noqa: PLR0913,PLR0917
+        path: Annotated[str | None, "The path to the dcover executable"] = None,
+        working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
+        dcover_timeout: Annotated[
+            int | None, "The maximum time in seconds to wait for dcover to create tests."
+        ] = DEFAULT_TIMEOUT,
+        entry_points: Annotated[
+            list[str] | None,
+            "The list of package names, class names, and/or methods to write tests for. "
+            "The entries here should be fully qualified, in other words you must include "
+            "the package and class names when specifying a method name.",
+        ] = None,
+        args: Annotated[list[str] | None, "The options to pass to dcover"] = None,
+        ctx: Annotated[Context | None, "The MCP Server Context"] = None,
+) -> object:
+    """Invoke Diffblue Cover to generate unit tests for Java code.
+
+    This tool executes the dcover CLI to automatically generate JUnit tests for the
+    specified Java classes, methods, or packages. It supports various configuration
+    options to control the test generation process.
+
+    Args:
+        path: Path to the dcover executable. If not provided, searches system PATH
+            and the DIFFBLUE_COVER_CLI environment variable.
+        working_directory: Root directory of the Java project to test. Defaults to
+            the current working directory.
+        dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
+            for no timeout (not recommended).
+        entry_points: List of fully-qualified Java targets (packages, classes, or methods)
+            to generate tests for. Examples: ['com.example.MyClass',
+            'com.example.MyClass.myMethod']. If None, tests entire project.
+        args: Additional arguments to pass to dcover. Defaults to None.
+        ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
+
+    Returns:
+        dict: Execution result containing:
+            - return_code (int): Exit code (0 for success)
+            - status (str): "success" if completed without errors
+            - output (str): Complete stdout/stderr from dcover
+            - command (list[str]): The exact command that was executed
+            - working_directory (Path): Directory where command was run
+
+    Raises:
+        ToolError: If dcover executable not found, command fails, or timeout exceeded.
+            The error includes the partial output collected before failure.
+
+    Note:
+        If DIFFBLUE_COVER_OPTIONS environment variable is set, it overrides all
+        option parameters (batch, skip_verification, etc.) except path, working_directory,
+        timeout, and entry_points.
+
+        This tool requires a valid Diffblue Cover license. See:
+        https://docs.diffblue.com/features/cover-cli/commands-and-arguments#create-tests
+    """
+    return await _run_dcover_command(
+        ctx=ctx,
+        path=path,
+        subcommand="create",
+        passthrough_args=args,
+        working_directory=working_directory,
+        dcover_timeout=dcover_timeout,
+        entry_points=entry_points,
+    )
+
+
+@mcp.tool()
+# Ignore "too many parameters for a method" and "too many positional arguments" check
+async def refactor(  # noqa: PLR0913,PLR0917
+        path: Annotated[str | None, "The path to the dcover executable"] = None,
+        working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
+        dcover_timeout: Annotated[
+            int | None, "The maximum time in seconds to wait for dcover to create tests."
+        ] = DEFAULT_TIMEOUT,
+        dry_run: Annotated[bool, "Run preflight checks only (aliased as --preflight)"] = False,
+        args: Annotated[list[str] | None, "The additional options to pass to dcover refactor"] = None,
+        ctx: Annotated[Context | None, "The MCP Server Context"] = None,
+) -> object:
+    """Invoke Diffblue Cover to refactor the project (aliased as 'fix-build').
+
+    This tool executes the `dcover refactor` command to apply automated
+    refactorings, such as fixing build issues or adding missing dependencies.
+
+    Args:
+        path: Path to the dcover executable. If not provided, searches system PATH
+            and the DIFFBLUE_COVER_CLI environment variable.
+        working_directory: Root directory of the Java project to test. Defaults to
+            the current working directory.
+        dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
+            for no timeout (not recommended).
+        dry_run: If True, passes the '--dry-run' flag to check for readiness
+            without applying changes.
+        args: Additional arguments to pass to dcover. Defaults to None.
+        ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
+
+    Returns:
+        dict: Execution result containing:
+            - return_code (int): Exit code (0 for success)
+            - status (str): "success" if completed without errors
+            - output (str): Complete stdout/stderr from dcover
+            - command (list[str]): The exact command that was executed
+            - working_directory (Path): Directory where command was run
+
+    Raises:
+        ToolError: If dcover executable not found, command fails, or timeout exceeded.
+            The error includes the partial output collected before failure.
+    """
+    return await _run_dcover_command(
+        ctx=ctx,
+        path=path,
+        subcommand="refactor",
+        passthrough_args=args,
+        working_directory=working_directory,
+        dcover_timeout=dcover_timeout,
+        dry_run=dry_run,
+    )
+
+
+@mcp.tool()
+# Ignore "too many parameters for a method" and "too many positional arguments" check
+async def issues(  # noqa: PLR0913,PLR0917
+        path: Annotated[str | None, "The path to the dcover executable"] = None,
+        working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
+        dcover_timeout: Annotated[
+            int | None, "The maximum time in seconds to wait for dcover to create tests."
+        ] = DEFAULT_TIMEOUT,
+        limit: Annotated[int | None, "Limit the number of issues to output"] = None,
+        skip: Annotated[int | None, "Skip the first N issues"] = None,
+        prompt: Annotated[bool, "Output suggested prompt for each actionable issue"] = False,
+        cover_json: Annotated[str | None, "Path to a JSON-formatted test-writing summary report"] = None,
+        args: Annotated[list[str] | None, "The additional options to pass to dcover issues"] = None,
+        ctx: Annotated[Context | None, "The MCP Server Context"] = None,
+) -> object:
+    """Invoke Diffblue Cover to identify project issues.
+
+    This tool executes the `dcover issues` command to output a prioritized
+    list of project issues that may prevent test generation.
+
+    Args:
+        path: Path to the dcover executable. If not provided, searches system PATH
+            and the DIFFBLUE_COVER_CLI environment variable.
+        working_directory: Root directory of the Java project to test. Defaults to
+            the current working directory.
+        dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
+            for no timeout (not recommended).
+        limit: Limit the number of issues to output.
+        skip: Skip the first N issues from the report.
+        prompt: If True, outputs a suggested prompt for each actionable issue.
+        cover_json: Location of the JSON-formatted test-writing summary report.
+        dry_run: If True, passes the '--dry-run' flag to check for readiness.
+        args: Additional arguments to pass to dcover. Defaults to None.
+        ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
+
+    Returns:
+        dict: Execution result containing:
+            - return_code (int): Exit code (0 for success)
+            - status (str): "success" if completed without errors
+            - output (str): Complete stdout/stderr from dcover
+            - command (list[str]): The exact command that was executed
+            - working_directory (Path): Directory where command was run
+
+    Raises:
+        ToolError: If dcover executable not found, command fails, or timeout exceeded.
+            The error includes the partial output collected before failure.
+    """
+    return await _run_dcover_command(
+        ctx=ctx,
+        path=path,
+        subcommand="issues",
+        passthrough_args=args,
+        working_directory=working_directory,
+        dcover_timeout=dcover_timeout,
+        limit=limit,
+        skip=skip,
+        prompt=prompt,
+        cover_json=cover_json,
+    )
+
+
 async def _run_dcover_command(  # noqa: PLR0913,PLR0917
-    ctx: Context,
-    path: str | None,
-    subcommand: str,
-    passthrough_args: list[str] | None,
-    working_directory: Path,
-    dcover_timeout: int | None,
-    **kwargs: Any,
+        ctx: Context,
+        path: str | None,
+        subcommand: str,
+        passthrough_args: list[str] | None,
+        working_directory: Path,
+        dcover_timeout: int | None,
+        **kwargs: Any,
 ) -> object:
     """Internal helper to execute any dcover command, stream output, and handle errors.
 
@@ -362,73 +588,6 @@ async def _run_dcover_command(  # noqa: PLR0913,PLR0917
         raise ToolError(str(e), "\n".join(output_lines)) from e
 
 
-@mcp.tool()
-# Ignore "too many parameters for a method" and "too many positional arguments" check
-async def create(  # noqa: PLR0913,PLR0917
-    path: Annotated[str | None, "The path to the dcover executable"] = None,
-    working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
-    dcover_timeout: Annotated[
-        int | None, "The maximum time in seconds to wait for dcover to create tests."
-    ] = DEFAULT_TIMEOUT,
-    entry_points: Annotated[
-        list[str] | None,
-        "The list of package names, class names, and/or methods to write tests for. "
-        "The entries here should be fully qualified, in other words you must include "
-        "the package and class names when specifying a method name.",
-    ] = None,
-    args: Annotated[list[str] | None, "The options to pass to dcover"] = None,
-    ctx: Annotated[Context | None, "The MCP Server Context"] = None,
-) -> object:
-    """Invoke Diffblue Cover to generate unit tests for Java code.
-
-    This tool executes the dcover CLI to automatically generate JUnit tests for the
-    specified Java classes, methods, or packages. It supports various configuration
-    options to control the test generation process.
-
-    Args:
-        path: Path to the dcover executable. If not provided, searches system PATH
-            and the DIFFBLUE_COVER_CLI environment variable.
-        working_directory: Root directory of the Java project to test. Defaults to
-            the current working directory.
-        dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
-            for no timeout (not recommended).
-        entry_points: List of fully-qualified Java targets (packages, classes, or methods)
-            to generate tests for. Examples: ['com.example.MyClass',
-            'com.example.MyClass.myMethod']. If None, tests entire project.
-        args: Additional arguments to pass to dcover. Defaults to None.
-        ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
-
-    Returns:
-        dict: Execution result containing:
-            - return_code (int): Exit code (0 for success)
-            - status (str): "success" if completed without errors
-            - output (str): Complete stdout/stderr from dcover
-            - command (list[str]): The exact command that was executed
-            - working_directory (Path): Directory where command was run
-
-    Raises:
-        ToolError: If dcover executable not found, command fails, or timeout exceeded.
-            The error includes the partial output collected before failure.
-
-    Note:
-        If DIFFBLUE_COVER_OPTIONS environment variable is set, it overrides all
-        option parameters (batch, skip_verification, etc.) except path, working_directory,
-        timeout, and entry_points.
-
-        This tool requires a valid Diffblue Cover license. See:
-        https://docs.diffblue.com/features/cover-cli/commands-and-arguments#create-tests
-    """
-    return await _run_dcover_command(
-        ctx=ctx,
-        path=path,
-        subcommand="create",
-        passthrough_args=args,
-        working_directory=working_directory,
-        dcover_timeout=dcover_timeout,
-        entry_points=entry_points,
-    )
-
-
 def find_dcover_executable(provided: str | None) -> str:
     """Locate the dcover executable using multiple discovery strategies.
 
@@ -463,119 +622,4 @@ def find_dcover_executable(provided: str | None) -> str:
         "Cannot find dcover executable. "
         "Ensure dcover is in PATH, provide explicit path, "
         f"or set {DIFFBLUE_COVER_CLI} environment variable."
-    )
-
-
-@mcp.tool()
-# Ignore "too many parameters for a method" and "too many positional arguments" check
-async def refactor(  # noqa: PLR0913,PLR0917
-    path: Annotated[str | None, "The path to the dcover executable"] = None,
-    working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
-    dcover_timeout: Annotated[
-        int | None, "The maximum time in seconds to wait for dcover to create tests."
-    ] = DEFAULT_TIMEOUT,
-    dry_run: Annotated[bool, "Run preflight checks only (aliased as --preflight)"] = False,
-    args: Annotated[list[str] | None, "The additional options to pass to dcover refactor"] = None,
-    ctx: Annotated[Context | None, "The MCP Server Context"] = None,
-) -> object:
-    """Invoke Diffblue Cover to refactor the project (aliased as 'fix-build').
-
-    This tool executes the `dcover refactor` command to apply automated
-    refactorings, such as fixing build issues or adding missing dependencies.
-
-    Args:
-        path: Path to the dcover executable. If not provided, searches system PATH
-            and the DIFFBLUE_COVER_CLI environment variable.
-        working_directory: Root directory of the Java project to test. Defaults to
-            the current working directory.
-        dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
-            for no timeout (not recommended).
-        dry_run: If True, passes the '--dry-run' flag to check for readiness
-            without applying changes.
-        args: Additional arguments to pass to dcover. Defaults to None.
-        ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
-
-    Returns:
-        dict: Execution result containing:
-            - return_code (int): Exit code (0 for success)
-            - status (str): "success" if completed without errors
-            - output (str): Complete stdout/stderr from dcover
-            - command (list[str]): The exact command that was executed
-            - working_directory (Path): Directory where command was run
-
-    Raises:
-        ToolError: If dcover executable not found, command fails, or timeout exceeded.
-            The error includes the partial output collected before failure.
-    """
-    return await _run_dcover_command(
-        ctx=ctx,
-        path=path,
-        subcommand="refactor",
-        passthrough_args=args,
-        working_directory=working_directory,
-        dcover_timeout=dcover_timeout,
-        dry_run=dry_run,
-    )
-
-
-@mcp.tool()
-# Ignore "too many parameters for a method" and "too many positional arguments" check
-async def issues(  # noqa: PLR0913,PLR0917
-    path: Annotated[str | None, "The path to the dcover executable"] = None,
-    working_directory: Annotated[Path, "The directory containing the project"] = DEFAULT_WORKING_DIRECTORY,
-    dcover_timeout: Annotated[
-        int | None, "The maximum time in seconds to wait for dcover to create tests."
-    ] = DEFAULT_TIMEOUT,
-    limit: Annotated[int | None, "Limit the number of issues to output"] = None,
-    skip: Annotated[int | None, "Skip the first N issues"] = None,
-    prompt: Annotated[bool, "Output suggested prompt for each actionable issue"] = False,
-    cover_json: Annotated[str | None, "Path to a JSON-formatted test-writing summary report"] = None,
-    dry_run: Annotated[bool, "Run preflight checks only (aliased as --preflight)"] = False,
-    args: Annotated[list[str] | None, "The additional options to pass to dcover issues"] = None,
-    ctx: Annotated[Context | None, "The MCP Server Context"] = None,
-) -> object:
-    """Invoke Diffblue Cover to identify project issues.
-
-    This tool executes the `dcover issues` command to output a prioritized
-    list of project issues that may prevent test generation.
-
-    Args:
-        path: Path to the dcover executable. If not provided, searches system PATH
-            and the DIFFBLUE_COVER_CLI environment variable.
-        working_directory: Root directory of the Java project to test. Defaults to
-            the current working directory.
-        dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
-            for no timeout (not recommended).
-        limit: Limit the number of issues to output.
-        skip: Skip the first N issues from the report.
-        prompt: If True, outputs a suggested prompt for each actionable issue.
-        cover_json: Location of the JSON-formatted test-writing summary report.
-        dry_run: If True, passes the '--dry-run' flag to check for readiness.
-        args: Additional arguments to pass to dcover. Defaults to None.
-        ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
-
-    Returns:
-        dict: Execution result containing:
-            - return_code (int): Exit code (0 for success)
-            - status (str): "success" if completed without errors
-            - output (str): Complete stdout/stderr from dcover
-            - command (list[str]): The exact command that was executed
-            - working_directory (Path): Directory where command was run
-
-    Raises:
-        ToolError: If dcover executable not found, command fails, or timeout exceeded.
-            The error includes the partial output collected before failure.
-    """
-    return await _run_dcover_command(
-        ctx=ctx,
-        path=path,
-        subcommand="issues",
-        passthrough_args=args,
-        working_directory=working_directory,
-        dcover_timeout=dcover_timeout,
-        limit=limit,
-        skip=skip,
-        prompt=prompt,
-        cover_json=cover_json,
-        dry_run=dry_run,
     )
