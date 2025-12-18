@@ -2,10 +2,11 @@
 
 This module provides a FastMCP server that exposes Diffblue Cover's test generation
 capabilities through the Model Context Protocol. It allows LLMs to invoke Diffblue Cover
-to automatically generate unit tests for Java projects.
+to automatically generate unit tests for Java and Python projects.
 
 The server exposes a 'create' tool that wraps the dcover CLI, providing configurable
-test generation with options for fuzzing, verification, and batch processing.
+test generation with options for fuzzing, verification, and batch processing. Additional
+tools 'refactor' and 'issues' are available for Java projects only.
 
 Environment Variables:
     DIFFBLUE_COVER_CLI: Path to the dcover executable (optional if dcover is on PATH)
@@ -75,9 +76,9 @@ mcp: Annotated[FastMCP[Any], "The global MCP server"] = FastMCP("DiffblueCover")
 
 @mcp.prompt("write tests")
 def write_tests() -> list[dict]:
-    """Provide system prompt for Java unit test writing guidance.
+    """Provide system prompt for Java and Python unit test writing guidance.
 
-    Establishes LLM context as a Java unit testing expert to improve
+    Establishes LLM context as a unit testing expert to improve
     test generation quality and suggestions.
 
     Returns:
@@ -86,7 +87,7 @@ def write_tests() -> list[dict]:
     return [
         {
             "role": "system",
-            "content": "You are a helpful assistant highly skilled at writing unit tests for java code.",
+            "content": "You are a helpful assistant highly skilled at writing unit tests for Java and Python code.",
         },
     ]
 
@@ -113,6 +114,10 @@ def create_options() -> dict:
         for efficient caching.
     """
     return {
+        "--agent": "Select AI agent for test generation: NONE, CLAUDE, CODEX, COPILOT. When using an agent, tests are "
+                   "generated method-by-method with git commit checkpointing. It is recommended to use this "
+                   "option where available as it improves test quality. Set the agent to match the LLM platform "
+                   "in use, e.g. when running in Claude Code, use '--agent=claude'. Default: NONE",
         "--active-profiles": "The comma separated list of profiles to use where creating Spring tests. Not providing a "
                              "value will use the default profile.",
         "--allow-jni": "The comma separated list of additional JNI library name prefixes that should be usable within "
@@ -379,23 +384,27 @@ async def create(  # noqa: PLR0913,PLR0917
     args: Annotated[list[str] | None, "The options to pass to dcover"] = None,
     ctx: Annotated[Context | None, "The MCP Server Context"] = None,
 ) -> object:
-    """Invoke Diffblue Cover to generate unit tests for Java code.
+    """Invoke Diffblue Cover to generate unit tests for Java or Python code.
 
-    This tool executes the dcover CLI to automatically generate JUnit tests for the
-    specified Java classes, methods, or packages. It supports various configuration
-    options to control the test generation process.
+    This tool executes the dcover CLI to automatically generate tests for the
+    specified classes, methods, packages, or modules. For Java projects, it generates
+    JUnit tests. For Python projects (experimental), pass "--python" in the args parameter
+    to generate pytest tests. It supports various configuration options to control the
+    test generation process.
 
     Args:
         path: Path to the dcover executable. If not provided, searches system PATH
             and the DIFFBLUE_COVER_CLI environment variable.
-        working_directory: Root directory of the Java project to test. Defaults to
+        working_directory: Root directory of the project to test. Defaults to
             the current working directory.
         dcover_timeout: Maximum execution time in seconds. Defaults to 600. Set to None
             for no timeout (not recommended).
-        entry_points: List of fully-qualified Java targets (packages, classes, or methods)
-            to generate tests for. Examples: ['com.example.MyClass',
-            'com.example.MyClass.myMethod']. If None, tests entire project.
-        args: Additional arguments to pass to dcover. Defaults to None.
+        entry_points: List of fully-qualified targets (packages, classes, or methods)
+            to generate tests for. For Java: ['com.example.MyClass',
+            'com.example.MyClass.myMethod']. For Python: ['mymodule', 'mymodule.MyClass'].
+            If None, tests entire project.
+        args: Additional arguments to pass to dcover. For Python projects, include "--python".
+            Defaults to None.
         ctx: MCP server context for logging and progress reporting (auto-injected by FastMCP).
 
     Returns:
@@ -411,6 +420,12 @@ async def create(  # noqa: PLR0913,PLR0917
             The error includes the partial output collected before failure.
 
     Note:
+        For enhanced test generation using LLMs, pass "--agent=claude" (or "codex", "copilot")
+        in the args parameter. This uses the specified LLM agent for test generation instead of
+        the internal non-LLM engine. It is recommended to use this option where available as it
+        improves test quality. If used, set the agent to the same type as yourself, e.g. when
+        running in Claude Code, use "--agent=claude".
+
         If DIFFBLUE_COVER_OPTIONS environment variable is set, it overrides all
         option parameters (batch, skip_verification, etc.) except path, working_directory,
         timeout, and entry_points.
@@ -478,10 +493,12 @@ async def refactor(  # noqa: PLR0913,PLR0917
     args: Annotated[list[str] | None, "The additional options to pass to dcover refactor"] = None,
     ctx: Annotated[Context | None, "The MCP Server Context"] = None,
 ) -> object:
-    """Invoke Diffblue Cover to refactor the project (aliased as 'fix-build').
+    """Invoke Diffblue Cover to refactor the Java project (aliased as 'fix-build').
 
     This tool executes the `dcover refactor` command to apply automated
     refactorings, such as fixing build issues or adding missing dependencies.
+
+    **Note:** This command is Java-only and does not support Python projects.
 
     Args:
         path: Path to the dcover executable. If not provided, searches system PATH
@@ -534,10 +551,12 @@ async def issues(  # noqa: PLR0913,PLR0917
     args: Annotated[list[str] | None, "The additional options to pass to dcover issues"] = None,
     ctx: Annotated[Context | None, "The MCP Server Context"] = None,
 ) -> object:
-    """Invoke Diffblue Cover to identify project issues.
+    """Invoke Diffblue Cover to identify Java project issues.
 
     This tool executes the `dcover issues` command to output a prioritized
     list of project issues that may prevent test generation.
+
+    **Note:** This command is Java-only and does not support Python projects.
 
     Args:
         path: Path to the dcover executable. If not provided, searches system PATH
